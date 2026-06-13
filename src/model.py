@@ -46,31 +46,6 @@ def encode(text, token_to_id, merges):
 
 x = encode("This is the Hugging Face Course.", token_to_id, merges).unsqueeze(0)
 
-class Model(nn.Module):
-    def __init__(self) -> None:
-        super().__init__()
-
-        self.tok_emb = nn.Embedding(vocab_size, num_embd)
-        self.pos_emb = nn.Embedding(block_size, num_embd)
-
-    def forward(self, idx: torch.Tensor):
-        # Batch/ Time / Channel Tensors
-        B, T = idx.shape
-        tok = self.tok_emb(idx)
-        pos = self.pos_emb(torch.arange(T, device=idx.device))
-
-## Encoding
-class EncoderBlock(nn.Module):
-    def __init__(self, self_att_block, feed_forward_block, features, dropout):
-        super().__init__()
-        self.self_att_block = self_att_block
-        self.feed_forward_block = feed_forward_block
-        self.res_conn = nn.ModuleList([ResidualConnection(features, dropout) for _ in range(2)])
-
-    def forward(self, x, src_mask):
-        x = self.res_conn[0](x, lambda x: self.self_att_block(x, x, x, src_mask))
-        x = self.res_conn[1](x, self.feed_forward_block)
-
 ## Encoding
 class EncoderBlock(nn.Module):
     def __init__(self, self_att_block, feed_forward_block, features, dropout):
@@ -100,14 +75,14 @@ class PositionalEncoding(nn.Module):
         super().__init__()
         self.dropout = nn.Dropout(dropout)
 
-        pe = torch.zeros(max_len, n_embd)
+        self.pe = torch.zeros(max_len, n_embd)
         pos = torch.arange(0, max_len).unsqueeze(1)
 
-        pe[:, 0::2 ] = torch.sin(pos / (10000 ** (torch.arange(0, n_embd, 2))))
-        pe[:, 1::2 ] = torch.cos(pos / (10000 ** (torch.arange(0, n_embd, 2))))
+        self.pe[:, 0::2 ] = torch.sin(pos / (10000 ** (torch.arange(0, n_embd, 2))))
+        self.pe[:, 1::2 ] = torch.cos(pos / (10000 ** (torch.arange(0, n_embd, 2))))
 
-        pe = pe.unsqueeze(0)
-        self.register_buffer("pe", pe)
+        self.pe = self.pe.unsqueeze(0)
+        self.register_buffer("pe", self.pe)
 
     def forward(self, x):
         x = x + self.pe[:, :x.shape[1], :].requires_grad_(False)
