@@ -89,4 +89,12 @@ def tokenize_data(data, vocab_size: int):
         merges[best_pair] = best_pair[0] + best_pair[1]
         base_vocab.append(best_pair[0] + best_pair[1])
     
-    return base_vocab, merges
+    ids_to_tokens = {}
+    for i, token in enumerate(base_vocab):
+        ids_to_tokens[i] = token
+
+    tokens_to_ids = {}
+    for i, token in enumerate(base_vocab):
+        tokens_to_ids[token] = i
+    
+    return base_vocab, merges, ids_to_tokens, tokens_to_ids
