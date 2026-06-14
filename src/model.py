@@ -7,14 +7,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn as nn
-import numpy
 
-data = [
-        "This is the Hugging Face Course.",
-        "This chapter is about tokenization.",
-        "This section shows several tokenizer algorithms.",
-        "Hopefully, you will be able to understand how they are trained and generate tokens.",
-        ]
 vocab_size = 50
 block_size = 64
 n_embd = 64
@@ -61,8 +54,12 @@ Call model.encode - (msg, mask)
             -> Call residual connection - (msg, sublayer)
             -> output tensor - Call residual connection (output tensor, feed forward block)
             -> return output tensor
-
     -> Normalize final output
+-> Call decode
+-> Call project
+-> Get argmax of predictions
+-> decode into words
+-> output words
 """
 
 ## Tokenization
@@ -95,58 +92,6 @@ def decoderr(pred_ids, token_ids: dict[int, str]):
     out_str = "".join(out)
     return out_str.replace("Ġ", " ")
 
-## Encoding
-class EncoderBlock(nn.Module):
-    def __init__(self, self_att_block, feed_forward_block, n_embd, dropout):
-        super().__init__()
-        self.self_att_block = self_att_block
-        self.feed_forward_block = feed_forward_block
-        self.res_conn = nn.ModuleList([ResidualConnection(n_embd, dropout) for _ in range(2)])
-
-    def forward(self, x, src_mask):
-        # Norm each x before calling the self_att_block.forward
-        x = self.res_conn[0](x, lambda x: self.self_att_block(x, x, x, src_mask))
-        x = self.res_conn[1](x, self.feed_forward_block)
-        return x
-
-class Encoder(nn.Module):
-    def __init__(self, n_embd: int, layers: nn.ModuleList) -> None:
-        super().__init__()
-        self.layers = layers
-        self.norm = LayerNorm(n_embd)
-
-    def forward(self, x, mask):
-        for layer in self.layers:
-            x = layer(x, mask)
-        return self.norm(x)
-
-## Decoding
-
-class DecoderBlock(nn.Module):
-    def __init__(self, n_embd, self_att_block, cross_att_block, feed_forward_block, dropout) -> None:
-        super().__init__()
-        self.self_att_block = self_att_block
-        self.cross_att_block = cross_att_block
-        self.feed_forward_block = feed_forward_block
-        self.res_conn = nn.ModuleList([ResidualConnection(n_embd, dropout) for _ in range(3)])
-    
-    def forward(self, x, enc_out, src_mask, trgt_mask):
-        x = self.res_conn[0](x, lambda x: self.self_att_block(x, x, x, src_mask))
-        x = self.res_conn[1](x, lambda x: self.cross_att_block(x, enc_out, enc_out, src_mask))
-        x = self.res_conn[2](x, self.feed_forward_block)
-        return x
-
-class Decoder(nn.Module):
-    def __init__(self, n_embd, layers) -> None:
-        super().__init__()
-        self.layers = layers
-        self.norm = LayerNorm(n_embd)
-
-    def forward(self, x, enc_out, src_mask, trgt_mask):
-        for layer in self.layers:
-            x = layer(x, enc_out, src_mask, trgt_mask)
-        return self.norm(x)
-
 ## Embedding
 class InputEmbedding(nn.Module):
     def __init__(self, vocab_size: int, n_embd: int):
@@ -176,53 +121,33 @@ class PositionalEncoding(nn.Module):
     def forward(self, x):
         x = x + self.pe[:, :x.shape[1], :].requires_grad_(False)
         return self.dropout(x)
-    
-class ResidualConnection(nn.Module):
-    def __init__(self, features: int, dropout: float):
+
+## Encoding
+class Encoder(nn.Module):
+    def __init__(self, n_embd: int, layers: nn.ModuleList) -> None:
         super().__init__()
-        self.dropout = nn.Dropout(dropout)
-        self.norm = LayerNorm(features)
-    
-    def forward(self, x, sublayer):
-        return x + self.dropout(sublayer(self.norm(x)))
+        self.layers = layers
+        self.norm = LayerNorm(n_embd)
 
+    def forward(self, x, mask):
+        for layer in self.layers:
+            x = layer(x, mask)
+        return self.norm(x)
 
-## Self-Attention
-
-## Feed-Forward NN (MLP)
-class MLP(nn.Module):
-    def __init__(self):
+class EncoderBlock(nn.Module):
+    def __init__(self, self_att_block, feed_forward_block, n_embd, dropout):
         super().__init__()
+        self.self_att_block = self_att_block
+        self.feed_forward_block = feed_forward_block
+        self.res_conn = nn.ModuleList([ResidualConnection(n_embd, dropout) for _ in range(2)])
 
+    def forward(self, x, src_mask):
+        # Norm each x before calling the self_att_block.forward
+        x = self.res_conn[0](x, lambda x: self.self_att_block(x, x, x, src_mask))
+        x = self.res_conn[1](x, self.feed_forward_block)
+        return x
 
-## Layer normalization
-
-class LayerNorm(nn.Module):
-    def __init__(self, features, eps=1e-5):
-        super().__init__()
-        self.gamma = nn.Parameter(torch.ones(features))
-        self.bias = nn.Parameter(torch.zeros(features))
-        self.eps = eps
-    
-    def forward(self, x):
-        mean = x.mean(dim=-1, keepdim=True)
-        standard_deviation = x.std(dim=-1, keepdim=True)
-        return self.gamma * (x - mean) / (standard_deviation + self.eps) + self.bias
-
-## Feed forward
-
-class FeedForward(nn.Module):
-    def __init__(self, n_embd, n_blocks, dropout):
-        super().__init__()
-        self.linear1 = nn.Linear(n_embd, n_blocks)
-        self.linear2 = nn.Linear(n_blocks, n_embd)
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x):
-        return self.linear2(self.dropout(torch.relu(self.linear1(x))))
-    
 ## Multi head attention
-
 class MultiHeadAttenentionBlock(nn.Module):
     def __init__(self, n_embd, h, dropout):
         super().__init__()
@@ -264,7 +189,66 @@ class MultiHeadAttenentionBlock(nn.Module):
         x = x.transpose(1,2).contiguous().view(x.shape[0], -1, self.h * self.dim_per_head)
 
         return self.output(x)
+
+class ResidualConnection(nn.Module):
+    def __init__(self, features: int, dropout: float):
+        super().__init__()
+        self.dropout = nn.Dropout(dropout)
+        self.norm = LayerNorm(features)
     
+    def forward(self, x, sublayer):
+        return x + self.dropout(sublayer(self.norm(x)))
+
+## Feed forward
+class FeedForward(nn.Module):
+    def __init__(self, n_embd, n_blocks, dropout):
+        super().__init__()
+        self.linear1 = nn.Linear(n_embd, n_blocks)
+        self.linear2 = nn.Linear(n_blocks, n_embd)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x):
+        return self.linear2(self.dropout(torch.relu(self.linear1(x))))
+
+## Layer normalization
+class LayerNorm(nn.Module):
+    def __init__(self, features, eps=1e-5):
+        super().__init__()
+        self.gamma = nn.Parameter(torch.ones(features))
+        self.bias = nn.Parameter(torch.zeros(features))
+        self.eps = eps
+    
+    def forward(self, x):
+        mean = x.mean(dim=-1, keepdim=True)
+        standard_deviation = x.std(dim=-1, keepdim=True)
+        return self.gamma * (x - mean) / (standard_deviation + self.eps) + self.bias
+
+## Decoding
+class DecoderBlock(nn.Module):
+    def __init__(self, n_embd, self_att_block, cross_att_block, feed_forward_block, dropout) -> None:
+        super().__init__()
+        self.self_att_block = self_att_block
+        self.cross_att_block = cross_att_block
+        self.feed_forward_block = feed_forward_block
+        self.res_conn = nn.ModuleList([ResidualConnection(n_embd, dropout) for _ in range(3)])
+    
+    def forward(self, x, enc_out, src_mask, trgt_mask):
+        x = self.res_conn[0](x, lambda x: self.self_att_block(x, x, x, trgt_mask))
+        x = self.res_conn[1](x, lambda x: self.cross_att_block(x, enc_out, enc_out, src_mask))
+        x = self.res_conn[2](x, self.feed_forward_block)
+        return x
+
+class Decoder(nn.Module):
+    def __init__(self, n_embd, layers) -> None:
+        super().__init__()
+        self.layers = layers
+        self.norm = LayerNorm(n_embd)
+
+    def forward(self, x, enc_out, src_mask, trgt_mask):
+        for layer in self.layers:
+            x = layer(x, enc_out, src_mask, trgt_mask)
+        return self.norm(x)
+
 class ProjectionLayer(nn.Module):
     def __init__(self, n_embd, vocab_size):
         super().__init__()
