@@ -6,7 +6,7 @@ import math
 
 import torch
 import torch.nn as nn
-import torch.nn as nn
+from torch.nn import functional as F
 
 vocab_size = 50
 block_size = 64
@@ -110,16 +110,18 @@ class PositionalEncoding(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
         pe = torch.zeros(max_len, n_embd)
-        pos = torch.arange(0, max_len).unsqueeze(1)
+        pos = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div = torch.exp(torch.arange(0, n_embd, 2, dtype=torch.float) * (-math.log(10000) / n_embd))
 
-        pe[:, 0::2 ] = torch.sin(pos / (10000 ** (torch.arange(0, n_embd, 2))))
-        pe[:, 1::2 ] = torch.cos(pos / (10000 ** (torch.arange(0, n_embd, 2))))
+        pe[:, 0::2 ] = torch.sin(pos * div)
+        pe[:, 1::2 ] = torch.cos(pos * div)
 
         pe = pe.unsqueeze(0)
         self.register_buffer("pe", pe)
 
     def forward(self, x):
-        x = x + self.pe[:, :x.shape[1], :].requires_grad_(False)
+        pe = self.get_buffer("pe")
+        x = x + pe[:, :x.shape[1], :].requires_grad_(False)
         return self.dropout(x)
 
 ## Encoding
@@ -280,6 +282,36 @@ class Transformer(nn.Module):
     
     def project(self, x):
         return self.proj_layer(x)
+    
+    def forward(self, src_ids, src_mask, trgt_ids = None, trgt_mask = None):
+        enc_out = self.encode(src_ids, src_mask)
+        
+        # encode source
+        dec_out = self.decode(enc_out, src_mask, trgt_ids, trgt_mask)
+        logits: torch.Tensor = self.project(dec_out)
+
+        loss = None
+
+        if trgt_ids is not None:
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), trgt_ids.view(-1))
+        
+        return logits, loss
+    
+    @torch.no_grad()
+    def generate(self, prompt, token_to_ids, ids_to_token, merges, max_new_tokens, device):
+        src_ids = encoderr(prompt, token_to_ids, merges).unsqueeze(0).to(device)
+        trgt_ids = torch.tensor([[token_to_ids["<|endoftext|>"]]], device=device)
+
+        for _ in range(max_new_tokens):
+            logits, _ = self(src_ids, None, trgt_ids)
+            next_logits = logits[:, -1, :]
+            next_id = torch.argmax(next_logits, dim=-1, keepdim=True)
+            trgt_ids = torch.cat([trgt_ids, next_id], dim=1)
+
+            if next_id.item() == token_to_ids["<|endoftext|>"]:
+                break
+        
+        return decoderr(trgt_ids, ids_to_token)
 
 def use_transformer(vocab_size, n_embd, dropout, N, h, n_blocks):
     # Source and target token embedding
@@ -329,7 +361,3 @@ def use_transformer(vocab_size, n_embd, dropout, N, h, n_blocks):
             nn.init.xavier_uniform_(p)
 
     return transformer
-
-# TODOS
-# TODO: Add proper encoding for text tokenization
-# TODO: Save tokens to seperate file for better performance
