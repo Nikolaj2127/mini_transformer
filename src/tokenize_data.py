@@ -10,7 +10,7 @@ def normalze_data(data):
     words = {}
     word = ""
     for char in norm_data:
-        if char not in "Ġ.,;:!?#$%&'()*+-/0123456789<=>@[\]^_`{|}~":
+        if char not in r"Ġ.,;:!?#$%&'()*+-/0123456789<=>@[\]^_`{|}~":
             word += char
         else:
             if word != "":
@@ -64,7 +64,7 @@ def tokenize_data(data, vocab_size: int):
     alphabet = sorted(list(set(norm_data)))
 
     # Add special token "end of text"
-    base_vocab = ["<|endoftext|>"] + alphabet.copy()
+    base_vocab = ["<|pad|>", "<|endoftext|>"] + alphabet.copy()
     
     # Split each word into chars
     splits = defaultdict(list)

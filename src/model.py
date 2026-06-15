@@ -170,7 +170,7 @@ class MultiHeadAttenentionBlock(nn.Module):
         dim_key = query.shape[-1]
         att_scores = (query @ key.transpose(-2, -1)) / math.sqrt(dim_key)
         if mask is not None:
-            att_scores = att_scores.masked_fill(mask==0, -1e9)
+            att_scores = att_scores.masked_fill(~mask, -1e9)
         att_scores = att_scores.softmax(dim=-1)
         if dropout is not None:
             att_scores = dropout(att_scores)
@@ -298,17 +298,21 @@ class Transformer(nn.Module):
         return logits, loss
     
     @torch.no_grad()
-    def generate(self, prompt, token_to_ids, ids_to_token, merges, max_new_tokens, device):
-        src_ids = encoderr(prompt, token_to_ids, merges).unsqueeze(0).to(device)
-        trgt_ids = torch.tensor([[token_to_ids["<|endoftext|>"]]], device=device)
+    def generate(self, prompt, tokens_to_ids, ids_to_token, merges, max_new_tokens, device):
+        src_ids = encoderr(prompt, tokens_to_ids, merges).unsqueeze(0).to(device)
+        trgt_ids = torch.tensor([[tokens_to_ids["<|endoftext|>"]]], device=device)
 
         for _ in range(max_new_tokens):
-            logits, _ = self(src_ids, None, trgt_ids)
+            T = trgt_ids.size(1)
+            causal = torch.tril(torch.ones((trgt_ids.size(1), trgt_ids.size(1)), dtype=torch.bool, device=device)).unsqueeze(0).unsqueeze(0)
+            padding = (trgt_ids != tokens_to_ids["<|pad|>"]).unsqueeze(1).unsqueeze(2)
+            trgt_mask = (padding & causal)
+            logits, _ = self(src_ids, None, trgt_ids, trgt_mask)
             next_logits = logits[:, -1, :]
             next_id = torch.argmax(next_logits, dim=-1, keepdim=True)
             trgt_ids = torch.cat([trgt_ids, next_id], dim=1)
 
-            if next_id.item() == token_to_ids["<|endoftext|>"]:
+            if next_id.item() == tokens_to_ids["<|endoftext|>"]:
                 break
         
         return decoderr(trgt_ids, ids_to_token)
