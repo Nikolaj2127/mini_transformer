@@ -32,9 +32,9 @@ def main():
     
     model.eval()
 
-    prompt = "the"
+    prompt = "shoe"
 
-    out = model.generate(prompt, tokens_to_ids, ids_to_token, merges, max_new_tokens=50, device=device)
+    out = model.generate(prompt, tokens_to_ids, ids_to_token, merges, max_new_tokens=50, device=device, temp=1)
 
     print("Token mappings:")
     print(f"ids_to_token[0] = {ids_to_token[0]}")
@@ -44,22 +44,20 @@ def main():
 
     print(out)
 
-def get_masks(tokens_to_ids, device, src_ids = None, trgt_ids = None):
-    src_mask = None
-    trgt_mask = None
-    if src_ids is not None:
-        src_mask = (src_ids != tokens_to_ids["<|pad|>"]).unsqueeze(1).unsqueeze(2).to(device)
-    if trgt_ids is not None:
-        causal_mask = torch.tril(torch.ones((trgt_ids.size(1), trgt_ids.size(1)), dtype=torch.bool, device=device)).unsqueeze(0).unsqueeze(0)
-        padding_mask = (trgt_ids != tokens_to_ids["<|pad|>"]).unsqueeze(1).unsqueeze(2).to(device)
-        trgt_mask = (padding_mask & causal_mask)
+def get_mask(tokens_to_ids, device, src_ids: torch.Tensor):
+    T = src_ids.size(1)
 
-    return src_mask, trgt_mask
+    causal_mask = torch.tril(torch.ones((T, T), dtype=torch.bool, device=device)).unsqueeze(0).unsqueeze(0)
+    if "<|pad|>" in tokens_to_ids:
+        padding_mask = (src_ids != tokens_to_ids["<|pad|>"]).unsqueeze(1).unsqueeze(2).to(device)
+        return (padding_mask & causal_mask)
+
+    return causal_mask
 
 def train_model(model: Transformer, train_data, test_data, device, tokens_to_ids):
     lr = 3e-3
     eval_iters = 100
-    max_iters = 600
+    max_iters = 1200
     batch_size = 32
     eval_interval = 200
     optimizer = torch.optim.AdamW(model.parameters(), lr)
@@ -85,26 +83,27 @@ def train_model(model: Transformer, train_data, test_data, device, tokens_to_ids
     def get_loss():
         model.eval()
         out = {}
-        for split in ["train", "test"]:
-            losses = []
-            for _ in range(eval_iters):
-                src_ids, trgt_ids = create_learning_batches(split)
-                src_mask, trgt_mask = get_masks(tokens_to_ids, device, src_ids, trgt_ids)
-                _, loss = model(src_ids, src_mask, trgt_ids, trgt_mask)
-                losses.append(loss.item())
-            out[split] = sum(losses) / len(losses)
+        with torch.no_grad():
+            for split in ["train", "test"]:
+                losses = []
+                for _ in range(eval_iters):
+                    src_ids, trgt_ids = create_learning_batches(split)
+                    src_mask = get_mask(tokens_to_ids, device, src_ids)
+                    _, loss = model(src_ids, src_mask, trgt_ids)
+                    losses.append(loss.item())
+                out[split] = sum(losses) / len(losses)
         model.train()
         return out
 
     for it in range(max_iters + 1):
         src_ids, trgt_ids = create_learning_batches("train")
-        src_mask, trgt_mask = get_masks(tokens_to_ids, device, src_ids, trgt_ids)
+        src_mask = get_mask(tokens_to_ids, device, src_ids)
 
         if it % eval_interval == 0:
             losses = get_loss()
             print(f"iteration {it:4d} | train loss {losses['train']:.3f} | val loss {losses['test']:.3f}")
         
-        logits, loss = model(src_ids, src_mask, trgt_ids, trgt_mask)
+        logits, loss = model(src_ids, src_mask, trgt_ids)
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)

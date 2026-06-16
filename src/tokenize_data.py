@@ -1,6 +1,7 @@
 
 # Normalization
 from collections import defaultdict
+import string
 
 def normalze_data(data):
     norm_data = ""
@@ -10,7 +11,7 @@ def normalze_data(data):
     words = {}
     word = ""
     for char in norm_data:
-        if char not in r"Ġ.,;:!?#$%&'()*+-/0123456789<=>@[\]^_`{|}~":
+        if char in string.ascii_letters:
             word += char
         else:
             if word != "":

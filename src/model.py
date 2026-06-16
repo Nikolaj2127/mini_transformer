@@ -125,7 +125,7 @@ class PositionalEncoding(nn.Module):
         return self.dropout(x)
 
 ## Encoding
-class Encoder(nn.Module):
+class Decoder(nn.Module):
     def __init__(self, n_embd: int, layers: nn.ModuleList) -> None:
         super().__init__()
         self.layers = layers
@@ -136,7 +136,7 @@ class Encoder(nn.Module):
             x = layer(x, mask)
         return self.norm(x)
 
-class EncoderBlock(nn.Module):
+class DecoderBlock(nn.Module):
     def __init__(self, self_att_block, feed_forward_block, n_embd, dropout):
         super().__init__()
         self.self_att_block = self_att_block
@@ -225,32 +225,6 @@ class LayerNorm(nn.Module):
         standard_deviation = x.std(dim=-1, keepdim=True)
         return self.gamma * (x - mean) / (standard_deviation + self.eps) + self.bias
 
-## Decoding
-class DecoderBlock(nn.Module):
-    def __init__(self, n_embd, self_att_block, cross_att_block, feed_forward_block, dropout) -> None:
-        super().__init__()
-        self.self_att_block = self_att_block
-        self.cross_att_block = cross_att_block
-        self.feed_forward_block = feed_forward_block
-        self.res_conn = nn.ModuleList([ResidualConnection(n_embd, dropout) for _ in range(3)])
-    
-    def forward(self, x, enc_out, src_mask, trgt_mask):
-        x = self.res_conn[0](x, lambda x: self.self_att_block(x, x, x, trgt_mask))
-        x = self.res_conn[1](x, lambda x: self.cross_att_block(x, enc_out, enc_out, src_mask))
-        x = self.res_conn[2](x, self.feed_forward_block)
-        return x
-
-class Decoder(nn.Module):
-    def __init__(self, n_embd, layers) -> None:
-        super().__init__()
-        self.layers = layers
-        self.norm = LayerNorm(n_embd)
-
-    def forward(self, x, enc_out, src_mask, trgt_mask):
-        for layer in self.layers:
-            x = layer(x, enc_out, src_mask, trgt_mask)
-        return self.norm(x)
-
 class ProjectionLayer(nn.Module):
     def __init__(self, n_embd, vocab_size):
         super().__init__()
@@ -260,34 +234,27 @@ class ProjectionLayer(nn.Module):
         return self.proj(x)
 
 class Transformer(nn.Module):
-    def __init__(self, encoder, decoder, src_embd, trgt_embd, src_pos, trgt_pos, proj_layer) -> None:
+    def __init__(self, decoder, src_embd, src_pos, proj_layer) -> None:
         super().__init__()
-        self.encoder = encoder
         self.decoder = decoder
         self.src_embd = src_embd
-        self.trgt_embd = trgt_embd
         self.src_pos = src_pos
-        self.trgt_pos = trgt_pos
         self.proj_layer = proj_layer
     
-    def encode(self, src, src_mask):
-        src = self.src_embd(src)
-        src = self.src_pos(src)
-        return self.encoder(src, src_mask)
-    
-    def decode(self, enc_out, src_mask, trgt, trgt_mask):
+    def decode(self, enc_out, src_mask, trgt):
         trgt = self.trgt_embd(trgt)
         trgt = self.trgt_pos(trgt)
-        return self.decoder(trgt, enc_out, src_mask, trgt_mask)
+        return self.decoder(trgt, enc_out, src_mask)
     
     def project(self, x):
         return self.proj_layer(x)
     
-    def forward(self, src_ids, src_mask, trgt_ids = None, trgt_mask = None):
-        enc_out = self.encode(src_ids, src_mask)
+    def forward(self, src_ids, src_mask, trgt_ids = None):
+        x = self.src_embd(src_ids)
+        x = self.src_pos(x)
         
         # encode source
-        dec_out = self.decode(enc_out, src_mask, trgt_ids, trgt_mask)
+        dec_out = self.decoder(x, src_mask)
         logits: torch.Tensor = self.project(dec_out)
 
         loss = None
@@ -298,66 +265,52 @@ class Transformer(nn.Module):
         return logits, loss
     
     @torch.no_grad()
-    def generate(self, prompt, tokens_to_ids, ids_to_token, merges, max_new_tokens, device):
+    def generate(self, prompt, tokens_to_ids, ids_to_token, merges, max_new_tokens, device, temp):
         src_ids = encoderr(prompt, tokens_to_ids, merges).unsqueeze(0).to(device)
-        trgt_ids = torch.tensor([[tokens_to_ids["<|endoftext|>"]]], device=device)
 
         for _ in range(max_new_tokens):
-            T = trgt_ids.size(1)
-            causal = torch.tril(torch.ones((trgt_ids.size(1), trgt_ids.size(1)), dtype=torch.bool, device=device)).unsqueeze(0).unsqueeze(0)
-            padding = (trgt_ids != tokens_to_ids["<|pad|>"]).unsqueeze(1).unsqueeze(2)
-            trgt_mask = (padding & causal)
-            logits, _ = self(src_ids, None, trgt_ids, trgt_mask)
+            T = src_ids.size(1)
+            causal = torch.tril(torch.ones((T, T), dtype=torch.bool, device=device)).unsqueeze(0).unsqueeze(0)
+
+            logits, _ = self(src_ids, causal)
             next_logits = logits[:, -1, :]
-            next_id = torch.argmax(next_logits, dim=-1, keepdim=True)
-            trgt_ids = torch.cat([trgt_ids, next_id], dim=1)
+
+            probs = torch.softmax(next_logits / temp, dim=-1)
+            next_id = torch.multinomial(probs, num_samples=1)
+
+            src_ids = torch.cat([src_ids, next_id], dim=1)
 
             if next_id.item() == tokens_to_ids["<|endoftext|>"]:
                 break
         
-        return decoderr(trgt_ids, ids_to_token)
+        return decoderr(src_ids, ids_to_token)
 
 def use_transformer(vocab_size, n_embd, dropout, N, h, n_blocks):
     # Source and target token embedding
     src_tok_embd = InputEmbedding(vocab_size, n_embd)
-    trgt_tok_embd = InputEmbedding(vocab_size, n_embd)
 
     # Source and target position embedding
     src_pos_embd = PositionalEncoding(n_embd, dropout)
-    trgt_pos_embd = PositionalEncoding(n_embd, dropout)
-
-    # Encoder blocks
-    encoder_blocks = []
-
-    for _ in range(N):
-        enc_att_block = MultiHeadAttenentionBlock(n_embd, h, dropout)
-
-        feed_forward_block = FeedForward(n_embd, n_blocks, dropout)
-
-        enc_block = EncoderBlock(enc_att_block, feed_forward_block, n_embd, dropout)
-        encoder_blocks.append(enc_block)
 
     # Decoder blocks
     decoder_blocks = []
 
     for _ in range(N):
         dec_self_att_block = MultiHeadAttenentionBlock(n_embd, h, dropout)
-        dec_cross_att_block = MultiHeadAttenentionBlock(n_embd, h, dropout)
 
         feed_forward_block = FeedForward(n_embd, n_blocks, dropout)
 
-        decoder_block = DecoderBlock(n_embd, dec_self_att_block, dec_cross_att_block, feed_forward_block, dropout)
+        decoder_block = DecoderBlock(dec_self_att_block, feed_forward_block, n_embd, dropout)
         decoder_blocks.append(decoder_block)
 
     # Create encoder and decoder
-    encoder = Encoder(n_embd, nn.ModuleList(encoder_blocks))
     decoder = Decoder(n_embd, nn.ModuleList(decoder_blocks))
 
     # Create projection layer
     proj_layer = ProjectionLayer(n_embd, vocab_size)
 
     # Create transformer
-    transformer = Transformer(encoder, decoder, src_tok_embd, trgt_tok_embd, src_pos_embd, trgt_pos_embd, proj_layer)
+    transformer = Transformer(decoder, src_tok_embd, src_pos_embd, proj_layer)
 
     # Initialize the parameters
     for p in transformer.parameters():
