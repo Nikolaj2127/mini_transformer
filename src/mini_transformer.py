@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+from datasets import load_dataset
 
 from model import *
 
@@ -75,7 +76,7 @@ def get_mask(tokens_to_ids, device, src_ids: torch.Tensor):
 
     return causal_mask
 
-def train_model(model: Transformer, train_data, test_data, device, tokens_to_ids):
+def train_model(model: Transformer, train_data, test_data, device, tokens_to_ids, merges):
     lr = 3e-3
     eval_iters = 100
     max_iters = 200
@@ -83,11 +84,10 @@ def train_model(model: Transformer, train_data, test_data, device, tokens_to_ids
     eval_interval = 200
     optimizer = torch.optim.AdamW(model.parameters(), lr)
 
-    def create_learning_batches(split):
-        if split == "train":
-            d = train_data
-        else:
-            d = test_data
+    def create_learning_batches():
+        fineweb_edu_fortified  = load_dataset("airtrain-ai/fineweb-edu-fortified", split="train", streaming=True)
+        dataset_head = fineweb_edu_fortified.take(2)
+        enc_data = encoderr(dataset_head[0], tokens_to_ids, merges)
         
         block = min(block_size, max(2, len(d) - 2))
         hi = len(d) - block - 1

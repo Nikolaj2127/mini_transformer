@@ -61,7 +61,8 @@ def merge_pair(a, b, splits: dict, words: dict):
 def add_online_data(data):
     copy_data = data
     prompts_data = pd.read_csv("hf://datasets/fka/prompts.chat/prompts.csv")
-    fineweb_edu_fortified  = load_dataset("airtrain-ai/fineweb-edu-fortified", "CC-MAIN-2013-20")
+    fineweb_edu_fortified  = load_dataset("airtrain-ai/fineweb-edu-fortified", split="train", streaming=True)
+    dataset_head = fineweb_edu_fortified.take(2)
 
     for entry in prompts_data["prompt"]:
         data.append(entry)
