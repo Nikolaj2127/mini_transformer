@@ -1,6 +1,6 @@
 from collections import defaultdict
 from typing import Any, List
-from tokenize_data import tokenize_data
+from tokenize_data import *
 
 import math
 
@@ -63,7 +63,7 @@ Call model.encode - (msg, mask)
 """
 
 ## Tokenization
-def encoderr(text, token_ids, merges):
+def encoderr(text, merges, tokenizer: Tokenizer):
     text = text.replace(" ", "Ġ")
     tokens = list(text)
 
@@ -78,16 +78,16 @@ def encoderr(text, token_ids, merges):
                 new_tokens.append(tokens[i])
                 i += 1
         tokens = new_tokens
+    
+    tokens.append("<|endoftext|>")
 
-    ids = [token_ids[t] for t in tokens]
+    ids = tokenizer.tokens_to_ids(tokens)
     return torch.tensor(ids, dtype=torch.long)
 
-def decoderr(pred_ids, token_ids: dict[int, str]):
-    out: List[str] = []
+def decoderr(pred_ids, tokenizer: Tokenizer):
     pred_ids_array = pred_ids.detach().cpu().flatten().tolist()
 
-    for id in pred_ids_array:
-        out.append(str(token_ids[id]))
+    out = tokenizer.ids_to_tokens(pred_ids_array)
 
     out_str = "".join(out)
     return out_str.replace("Ġ", " ")
@@ -260,9 +260,9 @@ class Transformer(nn.Module):
         return logits, loss
     
     @torch.no_grad()
-    def generate(self, model, prompt, tokens_to_ids, ids_to_token, merges, max_new_tokens, device, temp):
+    def generate(self, model, prompt, merges, max_new_tokens, device, temp, tokenizer):
         model.eval()
-        src_ids = encoderr(prompt, tokens_to_ids, merges).unsqueeze(0).to(device)
+        src_ids = encoderr(prompt, merges, tokenizer).unsqueeze(0).to(device)
 
         for _ in range(max_new_tokens):
             T = src_ids.size(1)
@@ -276,7 +276,7 @@ class Transformer(nn.Module):
 
             src_ids = torch.cat([src_ids, next_id], dim=1)
 
-            if next_id.item() == tokens_to_ids["<|endoftext|>"]:
+            if next_id.item() == tokenizer.tokens_to_ids["<|endoftext|>"]:
                 break
         
         return decoderr(src_ids, ids_to_token)

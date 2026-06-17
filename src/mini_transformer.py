@@ -2,6 +2,7 @@ from pathlib import Path
 import os
 
 from model import *
+from tokenize_data import *
 
 def main():
     text_path = Path(__file__).resolve().parent / "../training_data/soling and heeling.txt"
@@ -11,7 +12,9 @@ def main():
     data = [text]
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    vocab, merges, ids_to_token, tokens_to_ids = tokenize_data(data, vocab_size=50)
+    tokenizer = Tokenizer()
+
+    vocab, merges = tokenizer.tokenize_data(data, vocab_size=50)
 
     model = use_transformer(
         vocab_size=len(vocab),
@@ -22,11 +25,11 @@ def main():
         n_blocks=128,
     )
 
-    enc_data = encoderr(data[0], tokens_to_ids, merges)
+    enc_data = encoderr(data[0], merges)
     split_data = int(0.9*len(enc_data))
     train_data, test_data = enc_data[:split_data], enc_data[split_data:]
 
-    train_model(model, train_data, test_data, device, tokens_to_ids)
+    train_model(model, train_data, test_data, device)
 
     saved_model = load(vocab)
 
