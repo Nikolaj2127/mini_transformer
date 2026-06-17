@@ -1,10 +1,10 @@
 from pathlib import Path
+import os
 
 from model import *
 
 def main():
-
-    text_path = Path(__file__).resolve().parent / "sample.txt"
+    text_path = Path(__file__).resolve().parent / "../training_data/soling and heeling.txt"
     text = text_path.read_text(encoding="utf-8")
     text = text.replace("\r\n", "\n").replace("\n", " ")
 
@@ -22,19 +22,17 @@ def main():
         n_blocks=128,
     )
 
-    
-
     enc_data = encoderr(data[0], tokens_to_ids, merges)
     split_data = int(0.9*len(enc_data))
     train_data, test_data = enc_data[:split_data], enc_data[split_data:]
 
     train_model(model, train_data, test_data, device, tokens_to_ids)
-    
-    model.eval()
+
+    saved_model = load(vocab)
 
     prompt = "shoe"
 
-    out = model.generate(prompt, tokens_to_ids, ids_to_token, merges, max_new_tokens=50, device=device, temp=1)
+    out = model.generate(saved_model, prompt, tokens_to_ids, ids_to_token, merges, max_new_tokens=50, device=device, temp=1)
 
     print("Token mappings:")
     print(f"ids_to_token[0] = {ids_to_token[0]}")
@@ -43,6 +41,29 @@ def main():
     print(f"Token ID for '<|endoftext|>' = {tokens_to_ids['<|endoftext|>']}")
 
     print(out)
+
+def save(model, file_name="model.pth"):
+        model_folder_path = "./model"
+        if not os.path.exists(model_folder_path):
+            os.makedirs(model_folder_path)
+        
+        file_name = os.path.join(model_folder_path, file_name)
+        torch.save(model.state_dict(), file_name)
+
+def load(vocab, file_name = "model.pth"):
+    model_folder_path = "./model"
+    file_name = os.path.join(model_folder_path, file_name)
+    saved_model = use_transformer(
+        vocab_size=len(vocab),
+        n_embd=64,
+        dropout=0.1,
+        N=2,
+        h=4,
+        n_blocks=128,
+    )
+    saved_model.load_state_dict(torch.load(file_name, weights_only=True))
+
+    return saved_model
 
 def get_mask(tokens_to_ids, device, src_ids: torch.Tensor):
     T = src_ids.size(1)
@@ -57,7 +78,7 @@ def get_mask(tokens_to_ids, device, src_ids: torch.Tensor):
 def train_model(model: Transformer, train_data, test_data, device, tokens_to_ids):
     lr = 3e-3
     eval_iters = 100
-    max_iters = 1200
+    max_iters = 200
     batch_size = 32
     eval_interval = 200
     optimizer = torch.optim.AdamW(model.parameters(), lr)
@@ -100,6 +121,7 @@ def train_model(model: Transformer, train_data, test_data, device, tokens_to_ids
         src_mask = get_mask(tokens_to_ids, device, src_ids)
 
         if it % eval_interval == 0:
+            save(model)
             losses = get_loss()
             print(f"iteration {it:4d} | train loss {losses['train']:.3f} | val loss {losses['test']:.3f}")
         
@@ -111,6 +133,3 @@ def train_model(model: Transformer, train_data, test_data, device, tokens_to_ids
 
 if __name__ == "__main__":
     main()
-
-# TODO: Add action masking
-# TODO: Predict next token instead of current

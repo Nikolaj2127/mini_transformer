@@ -1,12 +1,13 @@
-
-# Normalization
 from collections import defaultdict
 import string
+import pandas as pd
+from datasets import load_dataset
 
 def normalze_data(data):
     norm_data = ""
     for text in data:
         norm_data += text
+        norm_data += "<|endoftext|>"
     norm_data = norm_data.replace(" ", "Ġ") 
     words = {}
     word = ""
@@ -57,8 +58,25 @@ def merge_pair(a, b, splits: dict, words: dict):
             splits[word] = split
     return splits
 
+def add_online_data(data):
+    copy_data = data
+    prompts_data = pd.read_csv("hf://datasets/fka/prompts.chat/prompts.csv")
+    fineweb_edu_fortified  = load_dataset("airtrain-ai/fineweb-edu-fortified", "CC-MAIN-2013-20")
+
+    for entry in prompts_data["prompt"]:
+        data.append(entry)
+    
+    for entry in fineweb_edu_fortified["text"]:
+        data.append(entry)
+    
+    print(len(copy_data))
+    return copy_data
+
 # Tokenize data with Byte-Pair Encoding tokanization
 def tokenize_data(data, vocab_size: int):
+
+    data = add_online_data(data)
+
     norm_data, words = normalze_data(data)
 
     # Filter out characters from normalized data

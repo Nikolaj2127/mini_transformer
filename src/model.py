@@ -241,11 +241,6 @@ class Transformer(nn.Module):
         self.src_pos = src_pos
         self.proj_layer = proj_layer
     
-    def decode(self, enc_out, src_mask, trgt):
-        trgt = self.trgt_embd(trgt)
-        trgt = self.trgt_pos(trgt)
-        return self.decoder(trgt, enc_out, src_mask)
-    
     def project(self, x):
         return self.proj_layer(x)
     
@@ -265,14 +260,15 @@ class Transformer(nn.Module):
         return logits, loss
     
     @torch.no_grad()
-    def generate(self, prompt, tokens_to_ids, ids_to_token, merges, max_new_tokens, device, temp):
+    def generate(self, model, prompt, tokens_to_ids, ids_to_token, merges, max_new_tokens, device, temp):
+        model.eval()
         src_ids = encoderr(prompt, tokens_to_ids, merges).unsqueeze(0).to(device)
 
         for _ in range(max_new_tokens):
             T = src_ids.size(1)
             causal = torch.tril(torch.ones((T, T), dtype=torch.bool, device=device)).unsqueeze(0).unsqueeze(0)
 
-            logits, _ = self(src_ids, causal)
+            logits, _ = model(src_ids, causal)
             next_logits = logits[:, -1, :]
 
             probs = torch.softmax(next_logits / temp, dim=-1)
