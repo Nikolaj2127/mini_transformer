@@ -9,6 +9,7 @@ def main():
     text_path = Path(__file__).resolve().parent / "../training_data/soling and heeling.txt"
     text = text_path.read_text(encoding="utf-8")
     text = text.replace("\r\n", "\n").replace("\n", " ")
+    fineweb_edu_fortified  = load_dataset("airtrain-ai/fineweb-edu-fortified", split="train", streaming=True)
 
     data = [text]
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -26,11 +27,11 @@ def main():
         n_blocks=128,
     )
 
-    enc_data = encoderr(data[0], merges)
+    enc_data = encoderr(data[0], merges, tokenizer)
     split_data = int(0.9*len(enc_data))
     train_data, test_data = enc_data[:split_data], enc_data[split_data:]
 
-    train_model(model, train_data, test_data, device)
+    train_model(model, train_data, test_data, device, merges, tokenizer, fineweb_edu_fortified)
 
     saved_model = load(vocab)
 
@@ -69,17 +70,17 @@ def load(vocab, file_name = "model.pth"):
 
     return saved_model
 
-def get_mask(tokens_to_ids, device, src_ids: torch.Tensor):
+def get_mask(device, src_ids: torch.Tensor, tokenizer):
     T = src_ids.size(1)
 
     causal_mask = torch.tril(torch.ones((T, T), dtype=torch.bool, device=device)).unsqueeze(0).unsqueeze(0)
-    if "<|pad|>" in tokens_to_ids:
-        padding_mask = (src_ids != tokens_to_ids["<|pad|>"]).unsqueeze(1).unsqueeze(2).to(device)
-        return (padding_mask & causal_mask)
+
+    padding_mask = (src_ids != tokenizer.tokens_to_ids["<|pad|>"]).unsqueeze(1).unsqueeze(2).to(device)
+    return (padding_mask & causal_mask)
 
     return causal_mask
 
-def train_model(model: Transformer, train_data, test_data, device, tokens_to_ids, merges):
+def train_model(model: Transformer, train_data, test_data, device, merges, tokenizer, online_data):
     lr = 3e-3
     eval_iters = 100
     max_iters = 200
@@ -87,10 +88,13 @@ def train_model(model: Transformer, train_data, test_data, device, tokens_to_ids
     eval_interval = 200
     optimizer = torch.optim.AdamW(model.parameters(), lr)
 
-    def create_learning_batches():
-        fineweb_edu_fortified  = load_dataset("airtrain-ai/fineweb-edu-fortified", split="train", streaming=True)
-        dataset_head = fineweb_edu_fortified.take(2)
-        enc_data = encoderr(dataset_head[0], tokens_to_ids, merges)
+    def create_learning_batches(online_data):
+        data = []
+        for _ in range(100):
+            data.append(next(iter(online_data["text"])))
+
+        enc_data = encoderr(dataset_head[0], merges, tokenizer)
+
         
         block = min(block_size, max(2, len(d) - 2))
         hi = len(d) - block - 1
@@ -112,7 +116,7 @@ def train_model(model: Transformer, train_data, test_data, device, tokens_to_ids
                 losses = []
                 for _ in range(eval_iters):
                     src_ids, trgt_ids = create_learning_batches(split)
-                    src_mask = get_mask(tokens_to_ids, device, src_ids)
+                    src_mask = get_mask(device, src_ids, tokenizer)
                     _, loss = model(src_ids, src_mask, trgt_ids)
                     losses.append(loss.item())
                 out[split] = sum(losses) / len(losses)
@@ -121,7 +125,7 @@ def train_model(model: Transformer, train_data, test_data, device, tokens_to_ids
 
     for it in range(max_iters + 1):
         src_ids, trgt_ids = create_learning_batches("train")
-        src_mask = get_mask(tokens_to_ids, device, src_ids)
+        src_mask = get_mask(device, src_ids, tokenizer)
 
         if it % eval_interval == 0:
             save(model)

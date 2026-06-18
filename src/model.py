@@ -87,7 +87,7 @@ def encoderr(text, merges, tokenizer: Tokenizer):
 def decoderr(pred_ids, tokenizer: Tokenizer):
     pred_ids_array = pred_ids.detach().cpu().flatten().tolist()
 
-    out = tokenizer.ids_to_tokens(pred_ids_array)
+    out: List[str] = tokenizer.ids_to_tokens(pred_ids_array)
 
     out_str = "".join(out)
     return out_str.replace("Ġ", " ")
@@ -279,7 +279,7 @@ class Transformer(nn.Module):
             if next_id.item() == tokenizer.tokens_to_ids["<|endoftext|>"]:
                 break
         
-        return decoderr(src_ids, ids_to_token)
+        return decoderr(src_ids, tokenizer)
 
 def use_transformer(vocab_size, n_embd, dropout, N, h, n_blocks):
     # Source and target token embedding

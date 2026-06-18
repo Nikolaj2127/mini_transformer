@@ -1,12 +1,13 @@
 from collections import defaultdict
 import string
+from typing import List
 import pandas as pd
 from datasets import load_dataset
 
 
 class Tokenizer():
     def __init__(self) -> None:
-        self.base_vocab = None
+        self.base_vocab = ["<|pad|>", "<|endoftext|>"]
         self.merges = None
 
     def normalze_data(self, data):
@@ -84,7 +85,7 @@ class Tokenizer():
             return tokens
         else:
             print("No base_vocab.")
-            return
+            return []
 
     def tokens_to_ids(self, tokens):
         if self.base_vocab is not None:
@@ -92,7 +93,13 @@ class Tokenizer():
             for i, token in enumerate(self.base_vocab):
                 tokens_to_ids[token] = i
             
-            ids = [self.base_vocab[id] for id in tokens]
+            ids = []
+            for token in tokens:
+                if self.base_vocab[token] is not None:
+                    ids.append(self.base_vocab[token])
+                else:
+                    print(f"Token {token} does not exist in base_vocab, skipping...")
+
             return ids
         else:
             print("No base_vocab.")
@@ -105,10 +112,7 @@ class Tokenizer():
         norm_data, words = self.normalze_data(data)
 
         # Filter out characters from normalized data
-        alphabet = sorted(list(set(norm_data)))
-
-        # Add special token "end of text"
-        base_vocab = ["<|pad|>", "<|endoftext|>"] + alphabet.copy()
+        base_vocab_set = (set(norm_data).union(set(self.base_vocab)))
         
         # Split each word into chars
         splits = defaultdict(list)
@@ -121,7 +125,7 @@ class Tokenizer():
         merges = defaultdict(tuple)
 
         # Run Splitting and merging loop until token size is reached
-        while len(base_vocab) < vocab_size:
+        while len(base_vocab_set) < vocab_size:
             pairs = self.get_pairs_with_freqs(splits, words)
             best_pair: tuple = ()
             highest_freq = None
@@ -131,10 +135,13 @@ class Tokenizer():
                     highest_freq = freq
             splits = self.merge_pair(best_pair[0], best_pair[1], splits, words)
             merges[best_pair] = best_pair[0] + best_pair[1]
-            base_vocab.append(best_pair[0] + best_pair[1])
+            base_vocab_set.add(best_pair[0] + best_pair[1])
         
+        # Convert base_vocab_set into sorted list
+        self.base_vocab = sorted(list(base_vocab_set))
+
         tokens_to_ids = {}
-        for i, token in enumerate(base_vocab):
+        for i, token in enumerate(self.base_vocab):
             tokens_to_ids[token] = i
         
-        return base_vocab, merges
+        return self.base_vocab, merges
