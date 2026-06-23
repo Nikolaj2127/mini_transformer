@@ -22,10 +22,11 @@ def main():
 
     logger.info("Initializing Tokenizer")
     tokenizer = Tokenizer()
-    cfg = Config(len(tokenizer.vocab))
 
     logger.info("Tokenizing data")
     tokenizer.tokenize_data(dataset=dataset)
+    
+    cfg = Config(len(tokenizer.vocab))
 
     logger.info("Initializing transformer")
 
