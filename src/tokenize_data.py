@@ -1,40 +1,38 @@
 from collections import defaultdict
+from itertools import islice
 import string
 from typing import List
-import pandas as pd
-from datasets import load_dataset
+from datasets import IterableDataset, load_dataset
+import logging
+logger = logging.getLogger(__name__)
 
 
 class Tokenizer():
     def __init__(self) -> None:
-        self.base_vocab = ["<|pad|>", "<|endoftext|>"]
-        self.merges = None
+        self.num_dataset_entries: int = 50
+        self.target_vocab_size: int = 50
+        self.TOK_DATA_ITER: int = 1
+        self.vocab: List[str] = []
+        self.special_tokens: List[str] = ["<|pad|>", "<|endoftext|>"]
+        self.base_vocab: set[str] = set()
+        self.words: dict[str, int] = {}
+        self.merges: dict[tuple[str, str], str] = {}
+        self.tokens_to_ids_map: dict[str, int] = {}
+        self.ids_to_tokens_map: dict[int, str] = {}
 
-    def normalze_data(self, data):
+    def fetch_online_data(self, dataset: IterableDataset) -> List[str]:
+        logger.info("Fetching online data")
+        copy_data = [entry["text"] for entry in islice(dataset, self.num_dataset_entries)]
+        return copy_data
+
+    def normalze_data(self, data: str) -> str:
+        logger.info("Normalizing data")
         norm_data = data.replace(" ", "Ġ") 
-        words = {}
-        word = ""
-        for char in norm_data:
-            if char in string.ascii_letters:
-                word += char
-            else:
-                if word != "":
-                    if word in words:
-                        words[word] += 1
-                    else:
-                        words[word] = 1
-                word = ""
-                if char == "Ġ":
-                    word += char
-                else:
-                    if char in words:
-                        words[char] += 1
-                    else:
-                        words[char] = 1
-        return norm_data, words
+        return norm_data
 
     # Get all pairs with their frequencies
-    def get_pairs_with_freqs(self, splits: dict, words: dict):
+    def get_pairs_with_freqs(self, splits: dict[str, List[str]], words: dict[str, int]) -> defaultdict[tuple[str, str], int]:
+        logger.info("Getting pairs with freqs")
         pairs = defaultdict(int)
 
         for word, freq in words.items():
@@ -44,11 +42,35 @@ class Tokenizer():
             for c in range(len(split) - 1):
                 pair = (split[c], split[c + 1])
                 pairs[pair] += freq
-        
         return pairs
+    
+    def update_base_vocab(self, norm_data: str) -> None:
+        logger.info("Updating base vocabulary")
+        self.base_vocab = self.base_vocab.union(set(norm_data))
+    
+    def update_words(self, norm_data: str) -> None:
+        logger.info("Updating words and frequencies")
+        word: str = ""
+        for char in norm_data:
+            if char in string.ascii_letters:
+                word += char
+            else:
+                if word != "":
+                    if word in self.words:
+                        self.words[word] += 1
+                    else:
+                        self.words[word] = 1
+                word = ""
+                if char == "Ġ":
+                    word += char
+                else:
+                    if char in self.words:
+                        self.words[char] += 1
+                    else:
+                        self.words[char] = 1
 
     # [m, e, r, g, e]
-    def merge_pair(self, a, b, splits: dict, words: dict):
+    def merge_pair(self, a, b, splits: dict[str, List[str]], words: dict[str, int]) -> dict[str, List[str]]:
         for word in words.keys():
             split = splits[word]
             if a and b in word and len(split) > 1:
@@ -61,87 +83,81 @@ class Tokenizer():
                 splits[word] = split
         return splits
 
-    def add_online_data(self, data):
-        copy_data = data
-        prompts_data = pd.read_csv("hf://datasets/fka/prompts.chat/prompts.csv")
-        fineweb_edu_fortified  = load_dataset("airtrain-ai/fineweb-edu-fortified", "CC-MAIN-2013-20")
-
-        for entry in prompts_data["prompt"]:
-            data.append(entry)
-        
-        for entry in fineweb_edu_fortified["text"]:
-            data.append(entry)
-        
-        print(len(copy_data))
-        return copy_data
-
-    def ids_to_tokens(self, token_ids):
-        if self.base_vocab is not None:
-            ids_to_tokens = {}
-            for i, token in enumerate(self.base_vocab):
-                ids_to_tokens[i] = token
-            
-            tokens = [self.base_vocab[t] for t in token_ids]
-            return tokens
-        else:
-            print("No base_vocab.")
-            return []
-
-    def tokens_to_ids(self, tokens):
-        if self.base_vocab is not None:
-            tokens_to_ids = {}
-            for i, token in enumerate(self.base_vocab):
-                tokens_to_ids[token] = i
-            
-            ids = []
-            for token in tokens:
-                if self.base_vocab[token] is not None:
-                    ids.append(self.base_vocab[token])
-                else:
-                    print(f"Token {token} does not exist in base_vocab, skipping...")
-
-            return ids
-        else:
-            print("No base_vocab.")
-            return
-
-
-    # Tokenize data with Byte-Pair Encoding tokanization
-    def tokenize_data(self, data, vocab_size: int):
-
-        norm_data, words = self.normalze_data(data)
-
-        # Filter out characters from normalized data
-        base_vocab_set = (set(norm_data).union(set(self.base_vocab)))
-        
+    def split_and_merge_data(self) -> None:
+        logger.info("Splitting and merging data")
         # Split each word into chars
-        splits = defaultdict(list)
+        splits: dict[str, List[str]] = defaultdict(list)
 
         # Create dict of chars for each word
-        for word in words.keys():
+        for word in self.words.keys():
             for c in word:
                 splits[word].append(c)
         
-        merges = defaultdict(tuple)
+        merges: dict[tuple[str, str], str] = defaultdict(tuple[str, str])
+        self.vocab = sorted(list(self.base_vocab))
 
         # Run Splitting and merging loop until token size is reached
-        while len(base_vocab_set) < vocab_size:
-            pairs = self.get_pairs_with_freqs(splits, words)
-            best_pair: tuple = ()
+        while len(self.vocab) < self.target_vocab_size - len(self.special_tokens):
+            pairs = self.get_pairs_with_freqs(splits, self.words)
+            # If no pairs are found, we cannot merge anything else
+            if not pairs:
+                logger.error("Warning: Ran out of pairs to merge before reaching target vocabulary size.")
+                break
+            best_pair: tuple[str, str] = ("", "")
             highest_freq = None
             for pair, freq in pairs.items():
                 if highest_freq is None or highest_freq < freq:
                     best_pair = pair
                     highest_freq = freq
-            splits = self.merge_pair(best_pair[0], best_pair[1], splits, words)
+            splits = self.merge_pair(best_pair[0], best_pair[1], splits, self.words)
             merges[best_pair] = best_pair[0] + best_pair[1]
-            base_vocab_set.add(best_pair[0] + best_pair[1])
+            self.vocab.append(best_pair[0] + best_pair[1])
         
-        # Convert base_vocab_set into sorted list
-        self.base_vocab = sorted(list(base_vocab_set))
+        self.merges = merges
+        self.vocab = self.special_tokens + self.vocab
 
-        tokens_to_ids = {}
-        for i, token in enumerate(self.base_vocab):
-            tokens_to_ids[token] = i
-        
-        return self.base_vocab, merges
+    def update_token_id_dicts(self):
+        logger.info("Updating token/id dictionaries")
+        if self.vocab is not None:
+            tokens_to_ids: dict[str, int] = {}
+            ids_to_tokens: dict[int, str] = {}
+            for i, token in enumerate(self.vocab):
+                tokens_to_ids[token] = i
+                ids_to_tokens[i] = token
+            self.tokens_to_ids_map = tokens_to_ids
+            self.ids_to_tokens_map = ids_to_tokens
+        else:
+            logger.error("No base_vocab.")
+            return
+
+    # Tokenize data with Byte-Pair Encoding tokanization
+    def tokenize_data(self, dataset: IterableDataset):
+        data_arr: List[str] = self.fetch_online_data(dataset)
+        norm_data: str = ""
+        for d in data_arr:
+            norm_data += self.normalze_data(d)
+        self.update_base_vocab(norm_data)
+        self.update_words(norm_data)
+
+        self.split_and_merge_data()
+
+        self.update_token_id_dicts()
+    
+    """ Helper functions """
+
+    def ids_to_tokens(self, token_ids: List[int]):
+        logger.info("Converting ids to tokens")
+        tokens = [self.ids_to_tokens_map[t] for t in token_ids]
+        return tokens
+
+    def tokens_to_ids(self, tokens: List[str]):
+        logger.info("Converting tokens to ids")   
+        ids = []
+        for token in tokens:
+            if token in self.tokens_to_ids_map:
+                ids.append(self.tokens_to_ids_map[token])
+            else:
+                logger.error(f"Token {token} does not exist in base_vocab, skipping...")
+        return ids
+    
+# text -> normalize: norm_text, words -> add words to wordlist -> perform splitting and merging -> encode vocab into ascii numbers for indexing

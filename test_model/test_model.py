@@ -13,8 +13,9 @@ def test_data():
 
 class TestModel:
     def test_normalization(self):
+        tokenizer = Tokenizer()
         sample_text = test_data()
-        norm_data, words = normalze_data(sample_text)
+        norm_data, words = tokenizer.normalze_data(sample_text)
         assert norm_data == "ThisĠisĠtheĠHuggingĠFaceĠCourse.ThisĠchapterĠisĠaboutĠtokenization.ThisĠsectionĠshowsĠseveralĠtokenizerĠalgorithms.Hopefully,ĠyouĠwillĠbeĠableĠtoĠunderstandĠhowĠtheyĠareĠtrainedĠandĠgenerateĠtokens."
 
         assert words == {'This': 3, 'Ġis': 2, 'Ġthe': 1, 'ĠHugging': 1, 'ĠFace': 1, 'ĠCourse': 1, '.': 4, 'Ġchapter': 1,
@@ -23,8 +24,9 @@ class TestModel:
             'Ġthey': 1, 'Ġare': 1, 'Ġtrained': 1, 'Ġand': 1, 'Ġgenerate': 1, 'Ġtokens': 1}
 
     def test_tokenize_data(self):
+        tokenizer = Tokenizer()
         sample_text = test_data()
-        vocab, merges = tokenize_data(sample_text, 50)
+        vocab, merges = tokenizer.tokenize_data(sample_text, 50)
 
         assert merges == {('Ġ', 't'): 'Ġt', ('i', 's'): 'is', ('e', 'r'): 'er', ('Ġ', 'a'): 'Ġa', ('Ġt', 'o'): 'Ġto', ('e', 'n'): 'en',
             ('T', 'h'): 'Th', ('Th', 'is'): 'This', ('o', 'u'): 'ou', ('s', 'e'): 'se', ('Ġto', 'k'): 'Ġtok',
@@ -34,3 +36,12 @@ class TestModel:
         assert vocab == ['<|endoftext|>', ',', '.', 'C', 'F', 'H', 'T', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'k', 'l', 'm', 'n', 'o',
             'p', 'r', 's', 't', 'u', 'v', 'w', 'y', 'z', 'Ġ', 'Ġt', 'is', 'er', 'Ġa', 'Ġto', 'en', 'Th', 'This', 'ou', 'se',
             'Ġtok', 'Ġtoken', 'nd', 'Ġis', 'Ġth', 'Ġthe', 'in', 'Ġab', 'Ġtokeni']
+    
+    def test_tokens_to_ids(self):
+        tokenizer = Tokenizer()
+
+        ids = tokenizer.tokenize_data("a")
+
+        print(ids)
+
+        assert ids == [9702]

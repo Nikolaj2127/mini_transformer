@@ -1,25 +1,34 @@
 from pathlib import Path
 import os
 from datasets import load_dataset
+import logging
+logger = logging.getLogger(__name__)
 
 from model import *
 from tokenize_data import *
 
 def main():
-    text_path = Path(__file__).resolve().parent / "../training_data/soling and heeling.txt"
-    text = text_path.read_text(encoding="utf-8")
-    text = text.replace("\r\n", "\n").replace("\n", " ")
-    fineweb_edu_fortified  = load_dataset("airtrain-ai/fineweb-edu-fortified", split="train", streaming=True)
+    logging.basicConfig(level=logging.INFO, handlers=[logging.FileHandler("mini_transformer.log"), logging.StreamHandler()])
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
-    data = [text]
+    logger.info("Starting transformer")
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
+    logger.info("Getting dataset")
+    dataset  = load_dataset("HuggingFaceFW/fineweb-edu", "default", filters=[("language", "==", "en")], split="train", streaming=True)
+
+    logger.info("Initializing Tokenizer")
     tokenizer = Tokenizer()
 
-    vocab, merges = tokenizer.tokenize_data(data, vocab_size=50)
+    logger.info("Tokenizing data")
+    tokenizer.tokenize_data(dataset=dataset)
 
+    logger.info("Initializing transformer")
     model = use_transformer(
-        vocab_size=len(vocab),
+        vocab_size=len(tokenizer.vocab),
         n_embd=64,
         dropout=0.1,
         N=2,
@@ -27,25 +36,57 @@ def main():
         n_blocks=128,
     )
 
-    enc_data = encoderr(data[0], merges, tokenizer)
-    split_data = int(0.9*len(enc_data))
-    train_data, test_data = enc_data[:split_data], enc_data[split_data:]
+    logger.info("Training model")
+    train_model(model, device, tokenizer)
 
-    train_model(model, train_data, test_data, device, merges, tokenizer, fineweb_edu_fortified)
-
-    saved_model = load(vocab)
+    logger.info("Saving model")
+    saved_model = load(tokenizer.vocab)
 
     prompt = "shoe"
 
-    out = model.generate(saved_model, prompt, tokens_to_ids, ids_to_token, merges, max_new_tokens=50, device=device, temp=1)
-
-    print("Token mappings:")
-    print(f"ids_to_token[0] = {ids_to_token[0]}")
-    print(f"ids_to_token[1] = {ids_to_token[1]}")
-    print(f"ids_to_token[2] = {ids_to_token[2]}")
-    print(f"Token ID for '<|endoftext|>' = {tokens_to_ids['<|endoftext|>']}")
+    logger.info("Generating output")
+    out = model.generate(saved_model, prompt, max_new_tokens=50, device=device, temp=1, tokenizer=tokenizer)
 
     print(out)
+
+def stream_data():
+    # Use streaming=True for large datasets
+    dataset = load_dataset("HuggingFaceFW/fineweb-edu", "default", filters=[("language", "==", "en")], split="train", streaming=True)
+    
+    iter1 = iter(dataset)
+    
+    entry_id = 0
+    b1 = []
+
+    for _ in range(5):
+        # Pull 2 items from each independent stream
+        batch1 = list(islice(iter1, 2))
+        
+        # Process all items in the batches (0 and 1)
+        for i in range(len(batch1)):
+            print(f"Entry ID: {entry_id}")
+            # Compare the text content
+            b1.append(batch1[i])
+            entry_id += 1
+    
+    dataset1 = load_dataset("HuggingFaceFW/fineweb-edu", "default", filters=[("language", "==", "en")], split="train", streaming=True)
+
+    iter2 = iter(dataset1)
+    b2 = []
+
+    for _ in range(5):
+        # Pull 2 items from each independent stream
+        batch2 = list(islice(iter2, 2))
+        
+        # Process all items in the batches (0 and 1)
+        for i in range(len(batch2)):
+            print(f"Entry ID: {entry_id}")
+            # Compare the text content
+            b2.append(batch2[i])
+            entry_id += 1
+    
+    print(b1 == b2)
+
 
 def save(model, file_name="model.pth"):
         model_folder_path = "./model"
@@ -75,27 +116,50 @@ def get_mask(device, src_ids: torch.Tensor, tokenizer):
 
     causal_mask = torch.tril(torch.ones((T, T), dtype=torch.bool, device=device)).unsqueeze(0).unsqueeze(0)
 
-    padding_mask = (src_ids != tokenizer.tokens_to_ids["<|pad|>"]).unsqueeze(1).unsqueeze(2).to(device)
+    # 1. Pass the token as a list so the loop in tokens_to_ids doesn't break it into characters
+    pad_id_list = tokenizer.tokens_to_ids(["<|pad|>"])
+    
+    # 2. Extract the actual integer ID from the list
+    pad_id = pad_id_list[0]
+
+    # Now src_ids (Tensor) != pad_id (int) will correctly create a boolean Tensor!
+    is_not_padding = (src_ids != pad_id)
+
+    padding_mask = is_not_padding.unsqueeze(1).unsqueeze(2).to(device)
     return (padding_mask & causal_mask)
 
     return causal_mask
 
-def train_model(model: Transformer, train_data, test_data, device, merges, tokenizer, online_data):
+def train_model(model: Transformer, device, tokenizer):
     lr = 3e-3
     eval_iters = 100
     max_iters = 200
-    batch_size = 32
+    block_size = 32
     eval_interval = 200
     optimizer = torch.optim.AdamW(model.parameters(), lr)
+    dataset_chunk_size = 5
+    # 1. Load your training and test streams
+    dataset = load_dataset("HuggingFaceFW/fineweb-edu", "default", filters=[("language", "==", "en")], split="train", streaming=True)
 
-    def create_learning_batches(online_data):
-        data = []
-        for _ in range(100):
-            data.append(next(iter(online_data["text"])))
+    test_dataset = dataset.take(10)
+    # Skip the first 50 entries so training only sees entry #51 onwards
+    train_dataset = dataset.skip(10)
 
-        enc_data = encoderr(dataset_head[0], merges, tokenizer)
+    # 2. Create persistent iterators outside the helper functions
+    train_iterator = iter(train_dataset)
+    test_iterator = iter(test_dataset)
 
-        
+    def create_learning_batches(iterator_obj):
+
+        raw_batch = list(islice(iterator_obj, dataset_chunk_size))
+
+        data = [entry["text"] for entry in raw_batch]
+
+        for entry in raw_batch:
+            data = entry["text"]
+
+        d = encoderr(data, tokenizer)
+      
         block = min(block_size, max(2, len(d) - 2))
         hi = len(d) - block - 1
         if hi <= 0:
@@ -103,7 +167,7 @@ def train_model(model: Transformer, train_data, test_data, device, merges, token
             y = d[1:block + 1].unsqueeze(0)
             return x.to(device), y.to(device)
         
-        ix = torch.randint(hi, (batch_size, ))
+        ix = torch.randint(hi, (block_size, ))
         x = torch.stack([d[i:i+block] for i in ix])
         y = torch.stack([d[i+1:i+block+1] for i in ix])
         return x.to(device), y.to(device)
@@ -113,24 +177,37 @@ def train_model(model: Transformer, train_data, test_data, device, merges, token
         out = {}
         with torch.no_grad():
             for split in ["train", "test"]:
+                iterator = train_iterator if split == "train" else iter(test_dataset)
+                
                 losses = []
-                for _ in range(eval_iters):
-                    src_ids, trgt_ids = create_learning_batches(split)
+                # Tip: You might want to lower eval_iters for the test set since 
+                # you only have 50 items total, meaning 1 iter is enough to see it all!
+                current_eval_iters = eval_iters if split == "train" else 1 
+                
+                for _ in range(current_eval_iters):
+                    src_ids, trgt_ids = create_learning_batches(iterator)
+                    
+                    # Safety check for empty tensors
+                    if src_ids is None or src_ids.numel() == 0:
+                        continue
+                        
                     src_mask = get_mask(device, src_ids, tokenizer)
                     _, loss = model(src_ids, src_mask, trgt_ids)
                     losses.append(loss.item())
-                out[split] = sum(losses) / len(losses)
+                    
+                out[split] = sum(losses) / len(losses) if losses else 0.0
         model.train()
         return out
 
     for it in range(max_iters + 1):
-        src_ids, trgt_ids = create_learning_batches("train")
+        
+        src_ids, trgt_ids = create_learning_batches(train_iterator)
         src_mask = get_mask(device, src_ids, tokenizer)
 
         if it % eval_interval == 0:
             save(model)
             losses = get_loss()
-            print(f"iteration {it:4d} | train loss {losses['train']:.3f} | val loss {losses['test']:.3f}")
+            logger.info(f"iteration {it:4d} | train loss {losses['train']:.3f} | val loss {losses['test']:.3f}")
         
         logits, loss = model(src_ids, src_mask, trgt_ids)
         optimizer.zero_grad(set_to_none=True)

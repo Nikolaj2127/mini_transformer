@@ -63,25 +63,29 @@ Call model.encode - (msg, mask)
 """
 
 ## Tokenization
-def encoderr(text, merges, tokenizer: Tokenizer):
-    text = text.replace(" ", "Ġ")
-    tokens = list(text)
+def encoderr(text_arr: List[str], tokenizer: Tokenizer):
+    all_tokens = []
+    for text in text_arr:
+        text = text.replace(" ", "Ġ")
+        tokens = list(text)
 
-    for (a, b), merged in merges.items():
-        i = 0
-        new_tokens = []
-        while i < len(tokens):
-            if i < len(tokens) - 1 and tokens[i] == a and tokens[i + 1] == b:
-                new_tokens.append(merged)
-                i += 2
-            else:
-                new_tokens.append(tokens[i])
-                i += 1
-        tokens = new_tokens
+        for (a, b), merged in tokenizer.merges.items():
+            i = 0
+            new_tokens = []
+            while i < len(tokens):
+                if i < len(tokens) - 1 and tokens[i] == a and tokens[i + 1] == b:
+                    new_tokens.append(merged)
+                    i += 2
+                else:
+                    new_tokens.append(tokens[i])
+                    i += 1
+            tokens = new_tokens
+        
+        tokens.append("<|endoftext|>")
     
-    tokens.append("<|endoftext|>")
+        all_tokens += tokens
 
-    ids = tokenizer.tokens_to_ids(tokens)
+    ids = tokenizer.tokens_to_ids(all_tokens)
     return torch.tensor(ids, dtype=torch.long)
 
 def decoderr(pred_ids, tokenizer: Tokenizer):
@@ -260,9 +264,9 @@ class Transformer(nn.Module):
         return logits, loss
     
     @torch.no_grad()
-    def generate(self, model, prompt, merges, max_new_tokens, device, temp, tokenizer):
+    def generate(self, model, prompt, max_new_tokens, device, temp, tokenizer):
         model.eval()
-        src_ids = encoderr(prompt, merges, tokenizer).unsqueeze(0).to(device)
+        src_ids = encoderr(prompt, tokenizer).unsqueeze(0).to(device)
 
         for _ in range(max_new_tokens):
             T = src_ids.size(1)
@@ -276,7 +280,7 @@ class Transformer(nn.Module):
 
             src_ids = torch.cat([src_ids, next_id], dim=1)
 
-            if next_id.item() == tokenizer.tokens_to_ids["<|endoftext|>"]:
+            if next_id.item() == tokenizer.tokens_to_ids("<|endoftext|>"):
                 break
         
         return decoderr(src_ids, tokenizer)
