@@ -2,6 +2,8 @@ from collections import defaultdict
 from itertools import islice
 import string
 from typing import List
+import torch
+from torch import Tensor
 from datasets import IterableDataset, load_dataset
 import logging
 logger = logging.getLogger(__name__)
@@ -9,16 +11,16 @@ logger = logging.getLogger(__name__)
 
 class Tokenizer():
     def __init__(self) -> None:
-        self.num_dataset_entries: int = 50
-        self.target_vocab_size: int = 50
+        self.num_dataset_entries: int = 500
+        self.target_vocab_size: int = 2000
         self.TOK_DATA_ITER: int = 1
-        self.vocab: List[str] = []
-        self.special_tokens: List[str] = ["<|pad|>", "<|endoftext|>"]
-        self.base_vocab: set[str] = set()
-        self.words: dict[str, int] = {}
-        self.merges: dict[tuple[str, str], str] = {}
-        self.tokens_to_ids_map: dict[str, int] = {}
-        self.ids_to_tokens_map: dict[int, str] = {}
+        self.vocab: List[bytes] = []
+        self.special_tokens: List[bytes] = [b"<|pad|>", b"<|endoftext|>"]
+        self.base_vocab: List[bytes] = [bytes([i]) for i in range(256)]
+        self.words: dict[tuple[bytes, ...], int] = {}
+        self.merges: dict[tuple[bytes, bytes], bytes] = {}
+        self.tokens_to_ids_map: dict[bytes, int] = {}
+        self.ids_to_tokens_map: dict[int, bytes] = {}
 
     def fetch_online_data(self, dataset: IterableDataset) -> List[str]:
         logger.info("Fetching online data")
@@ -31,7 +33,7 @@ class Tokenizer():
         return norm_data
 
     # Get all pairs with their frequencies
-    def get_pairs_with_freqs(self, splits: dict[str, List[str]], words: dict[str, int]) -> defaultdict[tuple[str, str], int]:
+    def get_pairs_with_freqs(self, splits: dict[tuple[bytes, ...], List[bytes]], words: dict[tuple[bytes, ...], int]) -> defaultdict[tuple[bytes, bytes], int]:
         logger.info("Getting pairs with freqs")
         pairs = defaultdict(int)
 
@@ -44,36 +46,35 @@ class Tokenizer():
                 pairs[pair] += freq
         return pairs
     
-    def update_base_vocab(self, norm_data: str) -> None:
-        logger.info("Updating base vocabulary")
-        self.base_vocab = self.base_vocab.union(set(norm_data))
-    
     def update_words(self, norm_data: str) -> None:
         logger.info("Updating words and frequencies")
+
         word: str = ""
         for char in norm_data:
             if char in string.ascii_letters:
                 word += char
             else:
                 if word != "":
-                    if word in self.words:
-                        self.words[word] += 1
+                    b_word = tuple(bytes([b]) for b in word.encode("utf-8"))
+                    if b_word in self.words:
+                        self.words[b_word] += 1
                     else:
-                        self.words[word] = 1
+                        self.words[b_word] = 1
                 word = ""
                 if char == "Ġ":
                     word += char
                 else:
-                    if char in self.words:
-                        self.words[char] += 1
+                    b_char = tuple(bytes([b]) for b in char.encode("utf-8"))
+                    if b_char in self.words:
+                        self.words[b_char] += 1
                     else:
-                        self.words[char] = 1
+                        self.words[b_char] = 1
 
     # [m, e, r, g, e]
-    def merge_pair(self, a, b, splits: dict[str, List[str]], words: dict[str, int]) -> dict[str, List[str]]:
+    def merge_pair(self, a: bytes, b: bytes, splits: dict[tuple[bytes, ...], List[bytes]], words: dict[tuple[bytes, ...], int]) -> dict[tuple[bytes, ...], List[bytes]]:
         for word in words.keys():
             split = splits[word]
-            if a and b in word and len(split) > 1:
+            if a in split and b in split and len(split) > 1:
                 i = 0
                 while i < len(split) - 1:
                     if split[i] == a and split[i+1] == b:
@@ -86,14 +87,13 @@ class Tokenizer():
     def split_and_merge_data(self) -> None:
         logger.info("Splitting and merging data")
         # Split each word into chars
-        splits: dict[str, List[str]] = defaultdict(list)
+        splits: dict[tuple[bytes, ...], List[bytes]] = defaultdict(list)
 
         # Create dict of chars for each word
         for word in self.words.keys():
-            for c in word:
-                splits[word].append(c)
+            splits[word] = list(word)
         
-        merges: dict[tuple[str, str], str] = defaultdict(tuple[str, str])
+        merges: dict[tuple[bytes, bytes], bytes] = defaultdict(tuple[bytes, bytes])
         self.vocab = sorted(list(self.base_vocab))
 
         # Run Splitting and merging loop until token size is reached
@@ -103,7 +103,7 @@ class Tokenizer():
             if not pairs:
                 logger.error("Warning: Ran out of pairs to merge before reaching target vocabulary size.")
                 break
-            best_pair: tuple[str, str] = ("", "")
+            best_pair: tuple[bytes, bytes] = (b"", b"")
             highest_freq = None
             for pair, freq in pairs.items():
                 if highest_freq is None or highest_freq < freq:
@@ -119,8 +119,8 @@ class Tokenizer():
     def update_token_id_dicts(self):
         logger.info("Updating token/id dictionaries")
         if self.vocab is not None:
-            tokens_to_ids: dict[str, int] = {}
-            ids_to_tokens: dict[int, str] = {}
+            tokens_to_ids: dict[bytes, int] = {}
+            ids_to_tokens: dict[int, bytes] = {}
             for i, token in enumerate(self.vocab):
                 tokens_to_ids[token] = i
                 ids_to_tokens[i] = token
@@ -136,7 +136,6 @@ class Tokenizer():
         norm_data: str = ""
         for d in data_arr:
             norm_data += self.normalze_data(d)
-        self.update_base_vocab(norm_data)
         self.update_words(norm_data)
 
         self.split_and_merge_data()
@@ -146,12 +145,12 @@ class Tokenizer():
     """ Helper functions """
 
     def ids_to_tokens(self, token_ids: List[int]):
-        logger.info("Converting ids to tokens")
+        #logger.info("Converting ids to tokens")
         tokens = [self.ids_to_tokens_map[t] for t in token_ids]
         return tokens
 
-    def tokens_to_ids(self, tokens: List[str]):
-        logger.info("Converting tokens to ids")   
+    def tokens_to_ids(self, tokens: List[bytes]):
+        #logger.info("Converting tokens to ids")   
         ids = []
         for token in tokens:
             if token in self.tokens_to_ids_map:
@@ -159,5 +158,40 @@ class Tokenizer():
             else:
                 logger.error(f"Token {token} does not exist in base_vocab, skipping...")
         return ids
+    
+    def encode_to_tensor(self, text_arr: List[str]):
+        all_tokens = []
+        for text in text_arr:
+            text = text.replace(" ", "Ġ")
+            byte_data = text.encode("utf-8")
+            tokens = [bytes([b]) for b in byte_data]
+
+            for (a, b), merged in self.merges.items():
+                i = 0
+                new_tokens = []
+                while i < len(tokens):
+                    if i < len(tokens) - 1 and tokens[i] == a and tokens[i + 1] == b:
+                        new_tokens.append(merged)
+                        i += 2
+                    else:
+                        new_tokens.append(tokens[i])
+                        i += 1
+                tokens = new_tokens
+            
+            tokens.append(b"<|endoftext|>")
+        
+            all_tokens += tokens
+
+        ids = self.tokens_to_ids(all_tokens)
+        return torch.tensor(ids, dtype=torch.long)
+
+    def decode_from_tensor(self, pred_ids: Tensor):
+        pred_ids_array = pred_ids.detach().cpu().flatten().tolist()
+
+        out: List[bytes] = self.ids_to_tokens(pred_ids_array)
+
+        out_bytes = b"".join(out)
+        out_str = out_bytes.decode("utf-8", errors="replace")
+        return out_str.replace("Ġ", " ")
     
 # text -> normalize: norm_text, words -> add words to wordlist -> perform splitting and merging -> encode vocab into ascii numbers for indexing
