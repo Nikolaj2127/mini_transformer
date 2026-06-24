@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 from model import *
 from tokenize_data import *
+from config import *
 
 def main():
 
@@ -26,7 +27,8 @@ def main():
     logger.info("Tokenizing data")
     tokenizer.tokenize_data(dataset=dataset)
     
-    cfg = Config(len(tokenizer.vocab))
+    logger.info("Setting config")
+    cfg = Config.from_name("test", len(tokenizer.vocab))
 
     logger.info("Initializing transformer")
 

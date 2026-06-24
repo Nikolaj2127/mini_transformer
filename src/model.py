@@ -2,6 +2,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any, List, Callable
 from tokenize_data import *
+from config import *
 
 import math
 
@@ -9,15 +10,6 @@ import torch
 from torch import Tensor
 import torch.nn as nn
 from torch.nn import functional as F
-
-class Config():
-    def __init__(self, vocab_size: int, n_embd: int = 256, dropout: float = 0.1, N: int = 6, h: int = 8):
-        self.n_embd: int = n_embd
-        self.vocab_size: int = vocab_size
-        self.dropout: float = dropout
-        self.N: int = N
-        self.h: int = h
-        self.n_blocks: int = 4 * n_embd
 
 vocab_size = 50
 block_size = 64
