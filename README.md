@@ -49,8 +49,20 @@ A short run produced the following trend:
 | 200 | 6.574 | 6.597 |
 | 400 | 5.945 | 6.022 |
 | 600 | 5.597 | 5.725 |
+| 800 | 5.429 | 5.598 |
+| 1000 | 5.269 | 5.408 |
+| 1200 | 5.119 | 5.270 |
+| 1400 | 5.022 | 5.124 |
+| 1600 | 4.996 | 5.106 |
+| 1800 | 4.908 | 5.091 |
+| 2000 | 4.901 | 5.008 |
+| 2200 | 4.836 | 4.983 |
+| 2400 | 4.776 | 4.905 |
+| 2600 | 4.725 | 4.803 |
+| 2800 | 4.732 | 4.855 |
+| 3000 | 4.631 | 4.777 |
 
-The loss starts near `ln(vocab_size)`, which is expected for nearly uniform initial predictions, and decreases as the model learns next-token patterns.
+The loss starts near `ln(vocab_size)`, which is expected for nearly uniform initial predictions, and decreases as the model learns next-token patterns. By iteration 3000, training loss has fallen by about 3.03 and validation loss by about 2.88, while the small gap between the two remains consistent with limited overfitting in this run.
 
 ## Project structure
 
