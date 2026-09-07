@@ -1,6 +1,5 @@
 from __future__ import annotations
-from collections import defaultdict
-from typing import Any, List, Callable
+from typing import Callable
 from tokenize_data import *
 from config import *
 
@@ -129,7 +128,7 @@ class MultiHeadAttenentionBlock(nn.Module):
         self.n_embd = n_embd
         self.h = h
         
-        assert n_embd % h == 0, "n_embd is not devisible by h"
+        assert n_embd % h == 0, "n_embd is not divisible by h"
 
         self.dim_per_head: int = n_embd // h
         self.query = nn.Linear(n_embd, n_embd, bias=False)
@@ -150,10 +149,10 @@ class MultiHeadAttenentionBlock(nn.Module):
         
         return (att_scores @ value), att_scores
         
-    def forward(self, query: Tensor, key: Tensor, value: Tensor, mask: Tensor) -> Tensor:
-        query: Tensor = self.query(query)
-        key: Tensor = self.key(key)
-        value: Tensor = self.value(value)
+    def forward(self, query_input: Tensor, key_input: Tensor, value_input: Tensor, mask: Tensor) -> Tensor:
+        query: Tensor = self.query(query_input)
+        key: Tensor = self.key(key_input)
+        value: Tensor = self.value(value_input)
 
         query = query.view(query.shape[0], query.shape[1], self.h, self.dim_per_head).transpose(1, 2)
         key = key.view(key.shape[0], key.shape[1], self.h, self.dim_per_head).transpose(1, 2)
@@ -195,7 +194,7 @@ class LayerNorm(nn.Module):
     
     def forward(self, x: Tensor) -> Tensor:
         mean: Tensor = x.mean(dim=-1, keepdim=True)
-        standard_deviation: Tensor = x.std(dim=-1, keepdim=True)
+        standard_deviation: Tensor = x.var(dim=-1, keepdim=True, unbiased=False)
         return self.gamma * (x - mean) / (standard_deviation + self.eps) + self.bias
 
 class ProjectionLayer(nn.Module):

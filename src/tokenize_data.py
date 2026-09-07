@@ -27,14 +27,12 @@ class Tokenizer():
         copy_data = [entry["text"] for entry in islice(dataset, self.num_dataset_entries)]
         return copy_data
 
-    def normalze_data(self, data: str) -> str:
-        logger.info("Normalizing data")
+    def normalize_data(self, data: str) -> str:
         norm_data = data.replace(" ", "Ġ") 
         return norm_data
 
     # Get all pairs with their frequencies
     def get_pairs_with_freqs(self, splits: dict[tuple[bytes, ...], List[bytes]], words: dict[tuple[bytes, ...], int]) -> defaultdict[tuple[bytes, bytes], int]:
-        logger.info("Getting pairs with freqs")
         pairs = defaultdict(int)
 
         for word, freq in words.items():
@@ -86,6 +84,8 @@ class Tokenizer():
 
     def split_and_merge_data(self) -> None:
         logger.info("Splitting and merging data")
+        printProgressBar(0, self.target_vocab_size, prefix = 'Progress:', suffix = 'Complete', length = 50)
+
         # Split each word into chars
         splits: dict[tuple[bytes, ...], List[bytes]] = defaultdict(list)
 
@@ -93,9 +93,11 @@ class Tokenizer():
         for word in self.words.keys():
             splits[word] = list(word)
         
-        merges: dict[tuple[bytes, bytes], bytes] = defaultdict(tuple[bytes, bytes])
+        merges: dict[tuple[bytes, bytes], bytes] = defaultdict(bytes)
         self.vocab = sorted(list(self.base_vocab))
 
+        printProgressBar(len(self.vocab), self.target_vocab_size, prefix = 'Progress:', suffix = 'Complete', length = 50)
+        
         # Run Splitting and merging loop until token size is reached
         while len(self.vocab) < self.target_vocab_size - len(self.special_tokens):
             pairs = self.get_pairs_with_freqs(splits, self.words)
@@ -112,6 +114,8 @@ class Tokenizer():
             splits = self.merge_pair(best_pair[0], best_pair[1], splits, self.words)
             merges[best_pair] = best_pair[0] + best_pair[1]
             self.vocab.append(best_pair[0] + best_pair[1])
+
+            printProgressBar(len(self.vocab), self.target_vocab_size, prefix = 'Progress:', suffix = 'Complete', length = 50)
         
         self.merges = merges
         self.vocab = self.special_tokens + self.vocab
@@ -134,8 +138,9 @@ class Tokenizer():
     def tokenize_data(self, dataset: IterableDataset):
         data_arr: List[str] = self.fetch_online_data(dataset)
         norm_data: str = ""
+        logger.info("Normalizing data")
         for d in data_arr:
-            norm_data += self.normalze_data(d)
+            norm_data += self.normalize_data(d)
         self.update_words(norm_data)
 
         self.split_and_merge_data()
@@ -195,3 +200,27 @@ class Tokenizer():
         return out_str.replace("Ġ", " ")
     
 # text -> normalize: norm_text, words -> add words to wordlist -> perform splitting and merging -> encode vocab into ascii numbers for indexing
+
+
+
+# Print iterations progress
+def printProgressBar (iteration, total, prefix = '', suffix = '', decimals = 1, length = 100, fill = '█', printEnd = "\r"):
+    """
+    Call in a loop to create terminal progress bar
+    @params:
+        iteration   - Required  : current iteration (Int)
+        total       - Required  : total iterations (Int)
+        prefix      - Optional  : prefix string (Str)
+        suffix      - Optional  : suffix string (Str)
+        decimals    - Optional  : positive number of decimals in percent complete (Int)
+        length      - Optional  : character length of bar (Int)
+        fill        - Optional  : bar fill character (Str)
+        printEnd    - Optional  : end character (e.g. "\r", "\r\n") (Str)
+    """
+    percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
+    filledLength = int(length * iteration // total)
+    bar = fill * filledLength + '-' * (length - filledLength)
+    print(f'\r{prefix} |{bar}| {percent}% {suffix}', end = printEnd)
+    # Print New Line on Complete
+    if iteration == total: 
+        print()

@@ -1,7 +1,4 @@
-from torch.optim.optimizer import StateDict
 from typing import Generator
-from torch import dropout
-from pathlib import Path
 import os
 from datasets import load_dataset
 import logging
@@ -31,19 +28,23 @@ def main():
     cfg = Config.from_name("test", len(tokenizer.vocab))
 
     logger.info("Initializing transformer")
+    if os.path.isfile("./model/model.pth"):
+        model: Transformer = load(cfg)
+    else:
+        model: Transformer = use_transformer(cfg)
 
-    model: Transformer = use_transformer(cfg)
+    model = model.to(device)
 
     logger.info("Training model")
     train_model(model, device, tokenizer, dataset)
 
-    logger.info("Saving model")
+    logger.info("Loading model")
     saved_model: Transformer = load(cfg)
 
     prompt: str = "The history of the Roman Empire begins with"
 
     logger.info("Generating output")
-    out: str = model.generate(saved_model, prompt, max_new_tokens=50, device=device, temp=1, tokenizer=tokenizer)
+    out: str = saved_model.generate(saved_model, prompt, max_new_tokens=50, device=device, temp=1, tokenizer=tokenizer)
 
     print(out)
 
@@ -53,19 +54,22 @@ def configure_logging() -> None:
     logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
 
+
+# Saving the model using pickeling to selected saving path
 def save(model: Transformer, file_name: str = "model.pth") -> None:
         model_folder_path: str = "./model"
         if not os.path.exists(model_folder_path):
             os.makedirs(model_folder_path)
         
-        file_name: str = os.path.join(model_folder_path, file_name)
-        torch.save(model.state_dict(), file_name)
+        model_path: str = os.path.join(model_folder_path, file_name)
+        torch.save(model.state_dict(), model_path)
 
+# Loading the model from selected import path
 def load(cfg: Config, file_name: str = "model.pth") -> Transformer:
     model_folder_path: str = "./model"
-    file_name: str = os.path.join(model_folder_path, file_name)
+    model_path: str = os.path.join(model_folder_path, file_name)
     saved_model: Transformer = use_transformer(cfg)
-    saved_model.load_state_dict(torch.load(file_name, weights_only=True))
+    saved_model.load_state_dict(torch.load(model_path, map_location="cpu", weights_only=True))
 
     return saved_model
 
@@ -81,6 +85,7 @@ def get_mask(device: str, src_ids: Tensor, tokenizer: Tokenizer) -> Tensor:
     padding_mask: Tensor = is_not_padding.unsqueeze(1).unsqueeze(2).to(device)
     return (padding_mask & causal_mask)
 
+# Main function for training
 def train_model(model: Transformer, device: str, tokenizer: Tokenizer, dataset: IterableDataset) -> None:
     lr: float = 1e-3
     eval_iters: int = 100
@@ -93,7 +98,7 @@ def train_model(model: Transformer, device: str, tokenizer: Tokenizer, dataset: 
     optimizer = torch.optim.AdamW(model.parameters(), lr)
     
     test_dataset: IterableDataset = dataset.take(10)
-    # Skip the first 50 entries so training only sees entry #51 onwards
+    # Skip the first 10 entries so training only sees entry #11 onwards
     train_dataset: IterableDataset = dataset.skip(10)
 
     # 2. Create persistent iterators outside the helper functions
@@ -145,6 +150,8 @@ def train_model(model: Transformer, device: str, tokenizer: Tokenizer, dataset: 
             if not raw_batch:
                 logger.info("End of dataset reached.")
                 break
+            else:
+                logger.info("Fetching complete")
             data = [entry["text"] for entry in raw_batch]
             current_train_tensor = tokenizer.encode_to_tensor(data).to(device)
 
@@ -156,11 +163,13 @@ def train_model(model: Transformer, device: str, tokenizer: Tokenizer, dataset: 
             losses = get_loss(current_train_tensor)
             logger.info(f"iteration {it:4d} | train loss {losses['train']:.3f} | val loss {losses['test']:.3f}")
         
-        logits, loss = model(src_ids, src_mask, trgt_ids)
+        _, loss = model(src_ids, src_mask, trgt_ids)
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
+
+    save(model)
 
 if __name__ == "__main__":
     main()
